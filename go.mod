@@ -1,4 +1,4 @@
-module chi-zerologformater
+module github.com/lastbyte32/chi-zerologformater
 
 go 1.20
 
