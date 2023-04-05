@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/go-chi/chi/middleware"
 	"github.com/rs/zerolog"
 )
+
+var isTTY bool
 
 var (
 	nRed     = []byte{'\033', '[', '3', '1', 'm'}
@@ -30,18 +34,31 @@ var (
 )
 
 type zeroLogFormatter struct {
-	logger *zerolog.Logger
+	logger  *zerolog.Logger
+	NoColor bool
 }
 
 type zeroLogEntry struct {
-	log     *zerolog.Logger
-	request *http.Request
-	buf     *bytes.Buffer
+	log      *zerolog.Logger
+	request  *http.Request
+	buf      *bytes.Buffer
+	useColor bool
 }
 
 func New(l *zerolog.Logger) middleware.LogFormatter {
+	fi, err := os.Stdout.Stat()
+	if err == nil {
+		m := os.ModeDevice | os.ModeCharDevice
+		isTTY = fi.Mode()&m == m
+	}
+
+	color := true
+	if runtime.GOOS == "windows" {
+		color = false
+	}
 	return &zeroLogFormatter{
-		logger: l,
+		logger:  l,
+		NoColor: !color,
 	}
 }
 
@@ -49,32 +66,29 @@ func (z *zeroLogEntry) Write(status, bytes int, header http.Header, elapsed time
 
 	switch {
 	case status < 200:
-		cW(z.buf, bBlue, "%03d", status)
+		colorWrite(z.buf, z.useColor, bBlue, "%03d", status)
 	case status < 300:
-		cW(z.buf, bGreen, "%03d", status)
+		colorWrite(z.buf, z.useColor, bGreen, "%03d", status)
 	case status < 400:
-		cW(z.buf, bCyan, "%03d", status)
+		colorWrite(z.buf, z.useColor, bCyan, "%03d", status)
 	case status < 500:
-		cW(z.buf, bYellow, "%03d", status)
+		colorWrite(z.buf, z.useColor, bYellow, "%03d", status)
 	default:
-		cW(z.buf, bRed, "%03d", status)
+		colorWrite(z.buf, z.useColor, bRed, "%03d", status)
 	}
 
-	cW(z.buf, bBlue, " %dB", bytes)
+	colorWrite(z.buf, z.useColor, bBlue, " %dB", bytes)
 
 	z.buf.WriteString(" in ")
 	if elapsed < 500*time.Millisecond {
-		cW(z.buf, nGreen, "%s", elapsed)
+		colorWrite(z.buf, z.useColor, nGreen, "%s", elapsed)
 	} else if elapsed < 5*time.Second {
-		cW(z.buf, nYellow, "%s", elapsed)
+		colorWrite(z.buf, z.useColor, nYellow, "%s", elapsed)
 	} else {
-		cW(z.buf, nRed, "%s", elapsed)
+		colorWrite(z.buf, z.useColor, nRed, "%s", elapsed)
 	}
 
-	z.log.Info().
-		//Str("method", z.request.Method).
-		Msg(z.buf.String())
-
+	z.log.Info().Msg(z.buf.String())
 }
 
 func (z *zeroLogEntry) Panic(v interface{}, stack []byte) {
@@ -82,19 +96,23 @@ func (z *zeroLogEntry) Panic(v interface{}, stack []byte) {
 }
 
 func (l zeroLogFormatter) NewLogEntry(r *http.Request) middleware.LogEntry {
+	useColor := !l.NoColor
+
 	entry := &zeroLogEntry{
-		log:     l.logger,
-		request: r,
-		buf:     &bytes.Buffer{},
+		log:      l.logger,
+		request:  r,
+		buf:      &bytes.Buffer{},
+		useColor: useColor,
 	}
-	cW(entry.buf, nCyan, "\"")
-	cW(entry.buf, bMagenta, "%s ", r.Method)
+
+	colorWrite(entry.buf, useColor, nCyan, "\"")
+	colorWrite(entry.buf, useColor, bMagenta, "%s ", r.Method)
 
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	cW(entry.buf, nCyan, "%s://%s%s %s\" ", scheme, r.Host, r.RequestURI, r.Proto)
+	colorWrite(entry.buf, useColor, nCyan, "%s://%s%s %s\" ", scheme, r.Host, r.RequestURI, r.Proto)
 
 	entry.buf.WriteString("from ")
 	entry.buf.WriteString(r.RemoteAddr)
@@ -103,8 +121,12 @@ func (l zeroLogFormatter) NewLogEntry(r *http.Request) middleware.LogEntry {
 	return entry
 }
 
-func cW(w io.Writer, color []byte, s string, args ...interface{}) {
-	w.Write(color)
+func colorWrite(w io.Writer, useColor bool, color []byte, s string, args ...interface{}) {
+	if isTTY && useColor {
+		w.Write(color)
+	}
 	fmt.Fprintf(w, s, args...)
-	w.Write(reset)
+	if isTTY && useColor {
+		w.Write(reset)
+	}
 }
