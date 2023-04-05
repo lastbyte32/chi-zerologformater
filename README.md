@@ -43,7 +43,7 @@ func main() {
     })
 
     // Start the HTTP server
-    log.Info().Msg("Listening on :3000...")
+	logger.Info().Msg("Listening on :3000...")
     http.ListenAndServe(":3000", router)
 }
 
