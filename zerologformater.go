@@ -1,4 +1,4 @@
-package github.com/lastbyte32/chi-zerologformater
+package zeroformater
 
 import (
 	"bytes"
